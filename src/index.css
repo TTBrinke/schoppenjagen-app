@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Basisinstellingen voor de app */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #020617; /* De donkerblauwe/zwarte achtergrond */
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent; /* Voorkomt blauwe gloed bij klikken op mobiel */
+}
+
+/* Zorgt ervoor dat de app altijd de volledige hoogte vult */
+#root {
+min-height: 100vh;
+}
+
+/* Verberg de scrollbar voor een echt app-gevoel */
+::-webkit-scrollbar {
+  display: none;
+}

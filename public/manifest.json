@@ -1,0 +1,17 @@
+{
+  "short_name": "Schoppenjagen",
+  "name": "Schoppenjagen met de Kamelaadjes",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/5753/5753695.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#020617",
+  "background_color": "#020617",
+  "orientation": "portrait"
+}
