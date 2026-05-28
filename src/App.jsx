@@ -1,16 +1,30 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Plus, List, Settings, RotateCcw, Trophy, AlertCircle, Check, X, Crown, Edit2 } from 'lucide-react';
+import { 
+  Play, Plus, List, Settings, RotateCcw, Trophy, 
+  AlertCircle, Check, X, Crown, Edit2, VolumeX, Volume2, ChevronDown, BarChart3, Trash2
+} from 'lucide-react';
 
-// HIER KUN JE DE GELUIDEN AANPASSEN
 const SOUND_URLS = {
-  BOO: "https://www.myinstants.com/media/sounds/crowd-boo-6126.mp3",
-  CHEER: "https://www.myinstants.com/media/sounds/applause-7.mp3"
+  BOO: "/boo.mp3",
+  CHEER: "/applaus.mp3"
 };
 
-const App = () => {
+const BESCHIKBARE_NAMEN = [
+  "Bart", "Dooren", "Jillert", "Joep", "Koedijk", "Maikel", 
+  "Mantjes", "Marco", "Patrick", "Piepoort", "Rob", 
+  "Roeland", "Ron", "Satje", "Tim", "Tom"
+];
+
+// Alleen de geldige Schoppenjagen scores (8 t/m 12 zijn uitgesloten)
+const GELDIGE_SCORES = [0, 1, 2, 3, 4, 5, 6, 7, 13, 14, 15, 16, 17, 18, 19, 20];
+
+export default function App() {
   const [fase, setFase] = useState('setup'); 
   const [aantalSpelers, setAantalSpelers] = useState(4);
-  const [spelers, setSpelers] = useState(['Zuid', 'West', 'Noord', 'Oost']);
+  
+  // Start spelers met lege strings om selectie te verplichten
+  const [spelers, setSpelers] = useState(['', '', '', '']);
+  
   const [startDeler, setStartDeler] = useState(0);
   const [huidigeDeler, setHuidigeDeler] = useState(0);
   const [rondes, setRondes] = useState([]);
@@ -18,18 +32,82 @@ const App = () => {
   const [actieveTab, setActieveTab] = useState('INVOEREN');
   const [melding, setMelding] = useState(null);
   const [popupSpelerIndex, setPopupSpelerIndex] = useState(null);
-  
-  // State voor wijzigen van een ronde
   const [editRondeIndex, setEditRondeIndex] = useState(null);
-  
-  // State voor de "Er onder door" vraag
   const [erOnderDoorVraag, setErOnderDoorVraag] = useState(null);
+  const [isJuichend, setIsJuichend] = useState(false);
+  const [bevestigResetVraag, setBevestigResetVraag] = useState(false);
+  const [bevestigResetStatsVraag, setBevestigResetStatsVraag] = useState(false);
+
+  // Statistieken in-memory en lokaal opslaan
+  const [stats, setStats] = useState(() => {
+    const lokaal = localStorage.getItem('schoppenjagen_stats');
+    if (lokaal) {
+      try {
+        return JSON.parse(lokaal);
+      } catch (e) {
+        console.error("Fout bij laden stats:", e);
+      }
+    }
+    const defaultStats = {};
+    BESCHIKBARE_NAMEN.forEach(naam => {
+      defaultStats[naam] = { gewonnen: 0, verloren: 0 };
+    });
+    return defaultStats;
+  });
+
+  const booAudio = useRef(null);
+  const cheerAudio = useRef(null);
+  const audioTimer = useRef(null);
+
+  const initAudio = () => {
+    if (!booAudio.current) {
+      booAudio.current = new Audio(SOUND_URLS.BOO);
+      booAudio.current.load();
+    }
+    if (!cheerAudio.current) {
+      cheerAudio.current = new Audio(SOUND_URLS.CHEER);
+      cheerAudio.current.loop = true;
+      cheerAudio.current.load();
+    }
+  };
+
+  const stopGeluid = () => {
+    if (booAudio.current) {
+      booAudio.current.pause();
+      booAudio.current.currentTime = 0;
+    }
+    if (cheerAudio.current) {
+      cheerAudio.current.pause();
+      cheerAudio.current.currentTime = 0;
+    }
+    if (audioTimer.current) clearTimeout(audioTimer.current);
+    setIsJuichend(false);
+  };
+
+  const speelGeluid = (type) => {
+    initAudio();
+    stopGeluid();
+
+    if (type === 'BOO') {
+      if (booAudio.current) {
+        booAudio.current.play().catch(e => console.log("Audio geblokkeerd"));
+      }
+    } else if (type === 'CHEER') {
+      if (cheerAudio.current) {
+        setIsJuichend(true);
+        cheerAudio.current.play().catch(e => console.log("Audio geblokkeerd"));
+        audioTimer.current = setTimeout(() => {
+          stopGeluid();
+        }, 30000);
+      }
+    }
+  };
 
   useEffect(() => {
     let nieuweSpelers = [...spelers];
     if (aantalSpelers > spelers.length) {
       for (let i = spelers.length; i < aantalSpelers; i++) {
-        nieuweSpelers.push(`Speler ${i + 1}`);
+        nieuweSpelers.push('');
       }
     } else if (aantalSpelers < spelers.length) {
       nieuweSpelers = nieuweSpelers.slice(0, aantalSpelers);
@@ -39,33 +117,26 @@ const App = () => {
     if (startDeler >= aantalSpelers) setStartDeler(0);
   }, [aantalSpelers]);
 
-  const speelGeluid = (url) => {
-    try {
-      const audio = new Audio(url);
-      audio.volume = 0.6;
-      audio.play().catch(e => {
-        console.warn("Audio kon niet worden afgespeeld. Klik eerst ergens op het scherm.");
-      });
-    } catch (err) {
-      console.error("Audio error:", err);
-    }
-  };
-
   const toonMelding = (tekst, type = 'info') => {
     setMelding({ tekst, type });
     setTimeout(() => setMelding(null), 4000);
   };
 
   const startSpel = () => {
-    if (spelers.some(naam => naam.trim() === '')) {
-      toonMelding('Vul a.u.b. alle spelernamen in.', 'error');
+    if (spelers.some(naam => !naam || naam.trim() === '')) {
+      toonMelding('Selecteer een geldige naam voor alle spelers.', 'error');
       return;
     }
+    const uniekeNamen = new Set(spelers);
+    if (uniekeNamen.size !== spelers.length) {
+      toonMelding('Iedere speler moet een unieke naam hebben.', 'error');
+      return;
+    }
+    initAudio();
     setHuidigeDeler(startDeler);
     setFase('spelen');
     setActieveTab('INVOEREN');
     setRondes([]);
-    setEditRondeIndex(null);
   };
 
   const berekenTotalen = (rondesData = rondes) => {
@@ -78,175 +149,187 @@ const App = () => {
     return totalen;
   };
 
+  const updateStatistieken = (eindTotalen) => {
+    const minScore = Math.min(...eindTotalen);
+    const maxScore = Math.max(...eindTotalen);
+
+    setStats(prev => {
+      const nieuweStats = { ...prev };
+      spelers.forEach((naam, idx) => {
+        if (!nieuweStats[naam]) {
+          nieuweStats[naam] = { gewonnen: 0, verloren: 0 };
+        }
+        if (eindTotalen[idx] === minScore) {
+          nieuweStats[naam].gewonnen += 1;
+        }
+        if (eindTotalen[idx] === maxScore) {
+          nieuweStats[naam].verloren += 1;
+        }
+      });
+      localStorage.setItem('schoppenjagen_stats', JSON.stringify(nieuweStats));
+      return nieuweStats;
+    });
+  };
+
   const finalizeRonde = (scores, wasErOnderDoor = false) => {
-    const huidigeTotalen = berekenTotalen();
+    const delerIdx = editRondeIndex !== null ? (startDeler + editRondeIndex) % aantalSpelers : huidigeDeler;
+    const uitkomstIdx = (delerIdx + 1) % aantalSpelers;
     let definitieveScores = [...scores];
-    
-    const relevanteDeler = editRondeIndex !== null 
-      ? (startDeler + editRondeIndex) % aantalSpelers 
-      : huidigeDeler;
-      
-    const magOnderDoorIndex = (relevanteDeler + 1) % aantalSpelers;
 
     if (wasErOnderDoor) {
-      const spelerNaam = spelers[magOnderDoorIndex];
+      const spelerNaam = spelers[uitkomstIdx];
       const tijdelijkeRondes = [...rondes];
       if (editRondeIndex !== null) tijdelijkeRondes.splice(editRondeIndex, 1);
       const totaalZonderHuidige = berekenTotalen(tijdelijkeRondes);
 
-      if (totaalZonderHuidige[magOnderDoorIndex] >= 20) {
-        definitieveScores = Array(aantalSpelers).fill(0).map((_, i) => i === magOnderDoorIndex ? -20 : 0);
-        toonMelding(`${spelerNaam} is er onder door! -20 punten.`, 'info');
+      if (totaalZonderHuidige[uitkomstIdx] >= 20) {
+        definitieveScores = Array(aantalSpelers).fill(0).map((_, i) => i === uitkomstIdx ? -20 : 0);
+        speelGeluid('CHEER');
+        toonMelding(`${spelerNaam} is er onder door! -20!`, 'info');
       } else {
-        definitieveScores = Array(aantalSpelers).fill(20).map((_, i) => i === magOnderDoorIndex ? 0 : 20);
-        toonMelding(`${spelerNaam} had te weinig punten voor -20. Rest krijgt +20!`, 'error');
+        definitieveScores = Array(aantalSpelers).fill(20).map((_, i) => i === uitkomstIdx ? 0 : 20);
+        speelGeluid('BOO');
+        toonMelding(`Te weinig punten voor -20. De rest krijgt +20!`, 'error');
+      }
+    } else {
+      if (definitieveScores.some(s => s >= 20)) {
+        speelGeluid('BOO');
       }
     }
 
+    const volgendeRondes = editRondeIndex !== null 
+      ? rondes.map((r, idx) => idx === editRondeIndex ? definitieveScores : r)
+      : [...rondes, definitieveScores];
+
     if (editRondeIndex !== null) {
-      const nieuweRondes = [...rondes];
-      nieuweRondes[editRondeIndex] = definitieveScores;
-      setRondes(nieuweRondes);
+      setRondes(volgendeRondes);
       setEditRondeIndex(null);
-      toonMelding("Ronde gewijzigd.", "info");
     } else {
-      const nieuweRondes = [...rondes, definitieveScores];
-      setRondes(nieuweRondes);
+      setRondes(volgendeRondes);
       setHuidigeDeler((huidigeDeler + 1) % aantalSpelers);
     }
 
     setHuidigeRondeInput(Array(aantalSpelers).fill(0));
     setErOnderDoorVraag(null);
+    setActieveTab('SCOREBORD');
     
-    const nieuweTotalen = berekenTotalen(editRondeIndex !== null ? rondes : [...rondes, definitieveScores]);
-    if (nieuweTotalen.some(t => t >= 100)) {
+    // Controleer DIRECT met de actuele lijst of de grens van 100 bereikt of overschreden is!
+    const actueleTotalen = berekenTotalen(volgendeRondes);
+    if (actueleTotalen.some(t => t >= 100)) {
       setFase('einde');
-      speelGeluid(SOUND_URLS.CHEER);
-    } else {
-      setActieveTab('SCOREBORD');
+      speelGeluid('CHEER');
+      updateStatistieken(actueleTotalen); // Statistieken direct bijwerken!
     }
   };
 
-  const probeerRondeToeTeVoegen = () => {
-    const scores = huidigeRondeInput.map(val => parseInt(val, 10) || 0);
-    const totaalPunten = scores.reduce((a, b) => a + b, 0);
-
-    if (totaalPunten !== 20) {
-      toonMelding(`De totale score moet precies 20 zijn! (Nu: ${totaalPunten})`, 'error');
+  const probeerOpslaan = () => {
+    const scores = huidigeRondeInput.map(v => parseInt(v) || 0);
+    if (scores.reduce((a, b) => a + b, 0) !== 20) {
+      toonMelding('Totaal van de scores moet precies 20 zijn!', 'error');
       return;
     }
-
-    const relevanteDeler = editRondeIndex !== null 
-      ? (startDeler + editRondeIndex) % aantalSpelers 
-      : huidigeDeler;
-    const magOnderDoorIndex = (relevanteDeler + 1) % aantalSpelers;
+    const dIdx = editRondeIndex !== null ? (startDeler + editRondeIndex) % aantalSpelers : huidigeDeler;
+    const uIdx = (dIdx + 1) % aantalSpelers;
     
-    if (scores[magOnderDoorIndex] === 20) {
+    if (scores[uIdx] === 20) {
       setErOnderDoorVraag(scores);
     } else {
       finalizeRonde(scores, false);
     }
   };
 
-  const startWijzigenRonde = (index) => {
-    setEditRondeIndex(index);
-    setHuidigeRondeInput([...rondes[index]]);
-    setActieveTab('INVOEREN');
-    window.scrollTo(0, 0);
-  };
-
-  const selecteerScore = (waarde) => {
-    if (waarde > 13) {
-      speelGeluid(SOUND_URLS.BOO);
-    }
-    const nw = [...huidigeRondeInput];
-    nw[popupSpelerIndex] = waarde;
-    setHuidigeRondeInput(nw);
-    setPopupSpelerIndex(null);
-  };
-
   const huidigeTotalen = berekenTotalen();
-  const laagsteScore = huidigeTotalen.length > 0 ? Math.min(...huidigeTotalen) : 0;
-  
-  const relevanteDeler = editRondeIndex !== null 
-    ? (startDeler + editRondeIndex) % aantalSpelers 
-    : huidigeDeler;
-  const magOnderDoorIndex = (relevanteDeler + 1) % aantalSpelers;
-
-  const totaalIngevuld = huidigeRondeInput.reduce((acc, val, idx) => 
-    idx === popupSpelerIndex ? acc : acc + val, 0
-  );
-  const puntenResterend = 20 - totaalIngevuld;
+  const laagsteScore = Math.min(...huidigeTotalen);
+  const delerLabelIdx = editRondeIndex !== null ? (startDeler + editRondeIndex) % aantalSpelers : huidigeDeler;
+  const uitkomstIdxLabel = (delerLabelIdx + 1) % aantalSpelers;
+  const restPunten = 20 - huidigeRondeInput.reduce((acc, v, i) => i === popupSpelerIndex ? acc : acc + v, 0);
 
   if (fase === 'setup') {
     return (
-      <div className="flex items-center justify-center min-h-screen p-4 bg-slate-950 text-slate-200 font-sans">
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl max-w-md w-full p-8 relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500 to-teal-500"></div>
+      <div className="flex items-center justify-center min-h-screen p-4 bg-black text-neutral-100 selection:bg-orange-500/30">
+        <div className="bg-[#0c0c0c] border border-neutral-900 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.8)] max-w-md w-full p-8 relative overflow-hidden backdrop-blur-xl">
+          <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-orange-600 via-amber-500 to-orange-400"></div>
           
           <div className="flex flex-col items-center mb-8">
-            <div className="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center mb-4 border border-slate-700 shadow-inner">
-              <Crown className="w-8 h-8 text-emerald-400" />
+            <div className="w-16 h-16 bg-neutral-900 rounded-2xl flex items-center justify-center mb-4 border border-neutral-850 shadow-inner">
+              <Crown className="w-8 h-8 text-orange-500" />
             </div>
-            <h1 className="text-3xl font-extrabold text-white tracking-tight text-center leading-tight">Schoppenjagen<br/><span className="text-emerald-400 text-lg font-medium">Met de Kamelaadjes</span></h1>
+            <h1 className="text-3xl font-black text-center tracking-tight leading-tight text-white">
+              Schoppenjagen<br />
+              <span className="text-orange-500 text-lg font-bold tracking-wider uppercase block mt-1">Met de Kamelaadjes</span>
+            </h1>
           </div>
 
-          <div className="space-y-8">
+          <div className="space-y-6">
             <div>
-              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Aantal spelers (3-6)</label>
-              <div className="flex space-x-2">
-                {[3, 4, 5, 6].map(num => (
-                  <button
-                    key={num}
-                    onClick={() => setAantalSpelers(num)}
-                    className={`flex-1 py-3 rounded-xl font-bold transition-all ${
-                      aantalSpelers === num
-                        ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
-                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+              <label className="block text-[10px] font-black text-neutral-400 uppercase tracking-widest mb-3 text-left font-sans">Aantal Spelers</label>
+              <div className="flex p-1 bg-[#050505] rounded-2xl border border-neutral-850">
+                {[3, 4, 5, 6].map(n => (
+                  <button 
+                    key={n} 
+                    onClick={() => setAantalSpelers(n)} 
+                    className={`flex-1 py-3.5 rounded-xl font-black transition-all duration-300 text-sm ${
+                      aantalSpelers === n 
+                        ? 'bg-orange-500 text-black shadow-lg shadow-orange-500/20' 
+                        : 'text-neutral-400 hover:text-white'
                     }`}
                   >
-                    {num}
+                    {n}
                   </button>
                 ))}
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Spelernamen & Eerste Deler</label>
-              <div className="space-y-3">
-                {spelers.map((naam, index) => (
-                  <div key={index} className="flex items-center space-x-3 bg-slate-800/50 p-2 rounded-xl border border-slate-800">
-                    <button
-                      onClick={() => setStartDeler(index)}
-                      className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 transition-all font-bold ${
-                        startDeler === index 
-                          ? 'bg-emerald-500 text-white shadow-md' 
-                          : 'bg-slate-700 text-slate-500 hover:bg-slate-600'
+              <label className="block text-[10px] font-black text-neutral-400 uppercase tracking-widest mb-3 text-left font-sans">Spelers & Eerste Deler</label>
+              <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
+                {spelers.map((naam, i) => (
+                  <div key={i} className="flex items-center space-x-3 bg-neutral-950 p-2 rounded-xl border border-neutral-900 transition-all focus-within:border-orange-500/50">
+                    <button 
+                      onClick={() => setStartDeler(i)} 
+                      className={`w-11 h-11 rounded-xl font-black text-sm transition-all flex items-center justify-center border ${
+                        startDeler === i 
+                          ? 'bg-orange-500 border-orange-400 text-black shadow-lg shadow-orange-500/20' 
+                          : 'bg-neutral-900 border-neutral-850 text-neutral-500 hover:text-neutral-300'
                       }`}
+                      title="Stel in als eerste deler"
                     >
                       D
                     </button>
-                    <input
-                      type="text"
-                      value={naam}
-                      onChange={(e) => {
-                        const nw = [...spelers];
-                        nw[index] = e.target.value;
-                        setSpelers(nw);
-                      }}
-                      className="w-full bg-transparent px-2 py-2 text-white focus:outline-none"
-                      placeholder={`Speler ${index + 1}`}
-                    />
+                    <div className="relative flex-1">
+                      <select 
+                        value={naam} 
+                        onChange={(e) => {
+                          const nw = [...spelers];
+                          nw[i] = e.target.value;
+                          setSpelers(nw);
+                        }}
+                        className={`w-full bg-neutral-900 border rounded-xl pl-4 pr-10 py-3 appearance-none outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500/30 transition-all font-bold text-sm ${
+                          naam ? 'text-white border-neutral-800' : 'text-neutral-600 border-red-950/40'
+                        }`}
+                      >
+                        <option value="">Kies speler...</option>
+                        {BESCHIKBARE_NAMEN.map(n => {
+                          const isAlGekozen = spelers.includes(n) && spelers[i] !== n;
+                          return (
+                            <option key={n} value={n} disabled={isAlGekozen} className="bg-neutral-950 text-white disabled:text-neutral-700">
+                              {n} {isAlGekozen ? '• Bezet' : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500 pointer-events-none" />
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
 
-            <button
-              onClick={startSpel}
-              className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-bold py-4 rounded-xl shadow-lg flex items-center justify-center transition-all"
+            <button 
+              onClick={startSpel} 
+              className="w-full bg-orange-500 hover:bg-orange-400 text-black font-extrabold py-5 rounded-2xl shadow-2xl shadow-orange-500/10 active:scale-[0.98] transition-all uppercase text-base tracking-wider mt-4 border border-orange-400/20"
             >
-              <Play className="mr-2 w-5 h-5 fill-current" /> Start de Strijd
+              Start de Strijd
             </button>
           </div>
         </div>
@@ -255,91 +338,139 @@ const App = () => {
   }
 
   return (
-    <div className="flex justify-center min-h-screen bg-slate-950 font-sans text-slate-200">
-      
-      {melding && (
-        <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-[60] animate-in fade-in slide-in-from-top-5">
-          <div className={`px-6 py-3 rounded-2xl shadow-2xl font-bold flex items-center space-x-3 backdrop-blur-md border ${
-            melding.type === 'error' ? 'bg-red-500/90 border-red-400 text-white' : 'bg-emerald-500/90 border-emerald-400 text-white'
-          }`}>
-            <AlertCircle className="w-5 h-5" />
-            <span>{melding.tekst}</span>
-          </div>
-        </div>
-      )}
-
-      <div className="w-full max-w-md bg-slate-900 shadow-2xl flex flex-col relative overflow-hidden h-screen border-x border-slate-800">
+    <div className="flex justify-center min-h-screen bg-black text-neutral-200 font-sans selection:bg-orange-500/30">
+      <div className="w-full max-w-md bg-[#080808] shadow-2xl flex flex-col relative h-screen border-x border-neutral-900 overflow-hidden">
         
-        <header className="px-6 py-5 bg-slate-900 border-b border-slate-800 flex justify-between items-center z-10">
-          <div>
-            <h2 className="text-xl font-bold text-white tracking-tight">
-              {actieveTab === 'SCOREBORD' && 'Scorebord'}
-              {actieveTab === 'INVOEREN' && (editRondeIndex !== null ? `Wijzig Ronde ${editRondeIndex + 1}` : `Ronde ${rondes.length + 1}`)}
-              {actieveTab === 'OPTIES' && 'Instellingen'}
+        {melding && (
+          <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-top-5 duration-350">
+            <div className={`px-6 py-3.5 rounded-2xl shadow-2xl font-bold flex items-center space-x-3 backdrop-blur-md border ${
+              melding.type === 'error' ? 'bg-red-600/90 border-red-500 text-white' : 'bg-orange-500/95 border-orange-400 text-black'
+            }`}>
+              <AlertCircle className="w-5 h-5" />
+              <span>{melding.tekst}</span>
+            </div>
+          </div>
+        )}
+
+        <header className="px-6 py-5 bg-[#0b0b0b] border-b border-neutral-900 flex justify-between items-center z-10 backdrop-blur-md">
+          <div className="text-left">
+            <h2 className="text-xl font-black text-white tracking-tight leading-none uppercase">
+              {actieveTab === 'SCOREBORD' ? 'Scorebord' : actieveTab === 'STATISTIEKEN' ? 'Statistieken' : editRondeIndex !== null ? 'Wijzig Ronde' : 'Invoeren'}
             </h2>
-            {actieveTab === 'INVOEREN' && (
-              <p className="text-xs text-slate-400 mt-1 flex items-center">
-                Deler: <span className="text-emerald-400 font-bold ml-1">{spelers[relevanteDeler]}</span>
+            {actieveTab !== 'STATISTIEKEN' && (
+              <p className="text-[10px] text-orange-500 font-black uppercase tracking-[0.25em] mt-1.5 flex items-center">
+                Deler: <span className="text-white ml-1">{spelers[delerLabelIdx]}</span>
+              </p>
+            )}
+            {actieveTab === 'STATISTIEKEN' && (
+              <p className="text-[10px] text-neutral-500 font-black uppercase tracking-[0.25em] mt-1.5">
+                Winst / Verlies overzicht
               </p>
             )}
           </div>
-          <Crown className="w-6 h-6 text-slate-600" />
-        </header>
-
-        <div className="flex-1 overflow-y-auto pb-24 bg-slate-900 relative">
-          
-          {fase === 'einde' && (
-            <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-sm z-40 flex flex-col items-center justify-center p-6 text-center">
-              <Trophy className="w-16 h-16 text-yellow-400 mb-6 animate-bounce" />
-              <h2 className="text-3xl font-extrabold text-white mb-2">Spel Voorbij!</h2>
-              <div className="w-full bg-slate-800 border border-slate-700 rounded-2xl p-5 mb-8">
-                {spelers.map((speler, i) => ({ naam: speler, score: huidigeTotalen[i] }))
-                  .sort((a, b) => a.score - b.score)
-                  .map((s, i) => (
-                    <div key={i} className={`flex justify-between items-center p-3 rounded-xl mb-2 ${i === 0 ? 'bg-emerald-500/20 text-emerald-400 font-bold' : 'bg-slate-800/50'}`}>
-                      <span>{i + 1}. {s.naam}</span>
-                      <span>{s.score} pt</span>
-                    </div>
-                  ))}
-              </div>
-              <button onClick={() => { setFase('setup'); setRondes([]); }} className="w-full bg-white text-slate-900 py-4 rounded-xl font-bold shadow-lg"><RotateCcw className="inline mr-2" /> Nieuw Spel</button>
+          {isJuichend ? (
+            <button 
+              onClick={stopGeluid} 
+              className="w-10 h-10 bg-red-600/20 text-red-400 rounded-full flex items-center justify-center animate-pulse border border-red-500/30 active:scale-95 transition-transform"
+              title="Stop applaus"
+            >
+              <VolumeX className="w-5 h-5" />
+            </button>
+          ) : (
+            <div className="w-9 h-9 rounded-xl bg-neutral-900 border border-neutral-850 flex items-center justify-center">
+              <Crown className="w-4 h-4 text-orange-500" />
             </div>
           )}
+        </header>
 
-          {actieveTab === 'SCOREBORD' && (
-            <div className="p-4 flex flex-col space-y-4">
-              <button onClick={() => { setEditRondeIndex(null); setHuidigeRondeInput(Array(aantalSpelers).fill(0)); setActieveTab('INVOEREN'); }} className="w-full bg-emerald-500 text-slate-900 font-bold py-4 rounded-xl shadow-lg flex items-center justify-center"><Plus className="w-5 h-5 mr-2" /> Nieuwe Scores</button>
-
-              <div className="bg-slate-800 border border-slate-700 rounded-2xl overflow-hidden shadow-lg">
+        <div className="flex-1 overflow-y-auto pb-28 p-4 scroll-smooth">
+          {fase === 'einde' ? (
+            <div className="text-center p-8 bg-neutral-950 rounded-3xl border border-orange-500/20 shadow-2xl relative overflow-hidden backdrop-blur-sm">
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-orange-600 to-amber-500"></div>
+              <Trophy className="w-16 h-16 text-orange-500 mx-auto mb-6 animate-bounce" />
+              <h2 className="text-3xl font-black mb-6 text-white uppercase tracking-tight">Eindstand</h2>
+              <div className="space-y-2 text-left">
+                {spelers.map((s, i) => ({ n: s, sc: huidigeTotalen[i] })).sort((a,b) => a.sc - b.sc).map((s, i) => (
+                  <div key={i} className={`flex justify-between items-center p-4 rounded-2xl border transition-all ${
+                    i === 0 
+                      ? 'bg-orange-500/10 text-orange-500 font-bold border-orange-500/30 shadow-inner' 
+                      : 'bg-neutral-900 border-neutral-850 text-neutral-300'
+                  }`}>
+                    <span className="font-bold">{i+1}. {s.n}</span>
+                    <span className="font-black">{s.sc} pt</span>
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => { setFase('setup'); stopGeluid(); setRondes([]); }} className="w-full bg-white text-black py-4.5 rounded-2xl font-black mt-8 shadow-xl hover:bg-neutral-100 active:scale-95 transition-all text-sm tracking-wider uppercase">Nieuw Spel</button>
+            </div>
+          ) : actieveTab === 'SCOREBORD' ? (
+            <div className="space-y-5">
+              <button 
+                onClick={() => {setEditRondeIndex(null); setHuidigeRondeInput(Array(aantalSpelers).fill(0)); setActieveTab('INVOEREN');}} 
+                className="w-full bg-orange-500 hover:bg-orange-400 text-black font-black py-5 rounded-2xl shadow-xl shadow-orange-500/5 flex items-center justify-center transition-all active:scale-[0.98] uppercase tracking-wider text-sm border border-orange-400/20"
+              >
+                <Plus className="mr-2 w-5 h-5 stroke-[3]" /> Nieuwe Ronde Invoeren
+              </button>
+              
+              <div className="bg-neutral-950 border border-neutral-900 rounded-[2rem] overflow-hidden shadow-2xl pb-4">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-center text-sm">
-                    <thead className="bg-slate-800/80 border-b border-slate-700 text-slate-400">
+                  <table className="w-full text-center text-sm font-sans">
+                    <thead className="bg-[#050505] text-neutral-400 border-b border-neutral-900">
                       <tr>
-                        <th className="py-4 px-3 w-12 text-slate-500">#</th>
-                        {spelers.map((speler, index) => <th key={index} className="py-4 px-2 font-semibold text-slate-200">{speler}</th>)}
-                        <th className="py-4 px-2 w-10"></th>
+                        <th className="p-4 w-12 border-r border-neutral-900 text-neutral-600 font-black text-[10px] tracking-wider uppercase text-center">#</th>
+                        {spelers.map((s, i) => (
+                          <th key={i} className="p-4 text-neutral-200 font-black text-xs tracking-wider uppercase text-center">{s}</th>
+                        ))}
+                        <th className="w-12"></th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-700/50">
+                    <tbody className="divide-y divide-neutral-900 bg-neutral-950/20 text-neutral-300">
                       {rondes.length === 0 ? (
-                        <tr><td colSpan={aantalSpelers + 2} className="py-12 text-slate-500 italic text-center">Nog geen scores.</td></tr>
+                        <tr>
+                          <td colSpan={aantalSpelers + 2} className="py-16 italic text-neutral-500 text-center text-sm">Nog geen rondes gespeeld.</td>
+                        </tr>
                       ) : (
-                        rondes.map((ronde, rIndex) => (
-                          <tr key={rIndex} className="hover:bg-slate-700/30">
-                            <td className="py-3 px-3 border-r border-slate-700 text-slate-500">{rIndex + 1}</td>
-                            {ronde.map((score, sIndex) => <td key={sIndex} className="py-3 px-2 text-slate-300">{score < 0 ? <span className="text-emerald-400 font-bold">{score}</span> : score}</td>)}
-                            <td className="py-3 px-2">
-                                <button onClick={() => startWijzigenRonde(rIndex)} className="text-slate-600 hover:text-emerald-400 p-1"><Edit2 className="w-4 h-4" /></button>
+                        rondes.map((r, ri) => (
+                          <tr key={ri} className="hover:bg-neutral-900/40 transition-colors">
+                            <td className="p-4 text-neutral-500 border-r border-neutral-900 font-bold text-xs">{ri+1}</td>
+                            {r.map((s, si) => (
+                              <td key={si} className="p-4 text-center">
+                                <span className={`inline-block px-2.5 py-1 rounded-lg font-bold ${
+                                  s < 0 
+                                    ? 'bg-orange-500/10 text-orange-500 border border-orange-500/20' 
+                                    : s >= 13 
+                                      ? 'bg-red-500/10 text-red-500 font-black' 
+                                      : 'text-neutral-300'
+                                }`}>
+                                  {s}
+                                </span>
+                              </td>
+                            ))}
+                            <td className="p-4">
+                              <button 
+                                onClick={() => {
+                                  setEditRondeIndex(ri); 
+                                  setHuidigeRondeInput([...rondes[ri]]); 
+                                  setActieveTab('INVOEREN');
+                                }} 
+                                className="text-neutral-500 hover:text-orange-500 p-2 rounded-lg hover:bg-neutral-900 transition-all active:scale-90"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
                             </td>
                           </tr>
                         ))
                       )}
                     </tbody>
                     {rondes.length > 0 && (
-                      <tfoot className="bg-slate-900 border-t-2 border-slate-700 font-bold">
-                        <tr>
-                          <td className="py-4 px-3 border-r border-slate-700 text-slate-400">Tot.</td>
-                          {huidigeTotalen.map((totaal, index) => <td key={index} className="py-4 px-2"><span className={totaal === laagsteScore ? 'text-emerald-400' : 'text-white'}>{totaal}</span></td>)}
+                      <tfoot className="bg-[#050505] font-bold border-t border-neutral-900">
+                        <tr className="divide-x divide-neutral-900">
+                          <td className="p-5 text-neutral-500 border-r border-neutral-900 text-[10px] font-black tracking-wider uppercase text-center align-middle">Totaal</td>
+                          {huidigeTotalen.map((t, i) => (
+                            <td key={i} className="p-5 text-center align-middle">
+                              <span className={`text-base font-black ${t === laagsteScore ? 'text-orange-500' : 'text-white'}`}>{t}</span>
+                            </td>
+                          ))}
                           <td></td>
                         </tr>
                       </tfoot>
@@ -348,132 +479,275 @@ const App = () => {
                 </div>
               </div>
             </div>
-          )}
+          ) : actieveTab === 'STATISTIEKEN' ? (
+            <div className="space-y-4">
+              <div className="bg-neutral-950 border border-neutral-900 rounded-[2rem] overflow-hidden shadow-2xl p-6">
+                <div className="flex justify-between items-center mb-6 border-b border-neutral-900 pb-4">
+                  <h3 className="text-white font-bold text-sm uppercase tracking-wider">Ranglijst</h3>
+                  <button 
+                    onClick={() => setBevestigResetStatsVraag(true)}
+                    className="text-red-500/60 hover:text-red-400 text-xs font-black uppercase tracking-widest flex items-center space-x-1.5 transition-colors p-2 rounded-lg hover:bg-neutral-900"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Stats Resetten</span>
+                  </button>
+                </div>
 
-          {actieveTab === 'INVOEREN' && (
-            <div className="p-4 space-y-4">
-              <div className="space-y-3">
-                {spelers.map((speler, index) => {
-                  const isMagUitkomen = index === magOnderDoorIndex;
-                  return (
-                    <div key={index} className={`bg-slate-800 border p-3 rounded-2xl flex items-center justify-between transition-all ${isMagUitkomen ? 'border-emerald-500/30' : 'border-slate-700'}`}>
-                      <div className="flex flex-col">
-                        <span className="font-bold text-slate-200 flex items-center">
-                          {speler} 
-                          {((startDeler + (editRondeIndex !== null ? editRondeIndex : rondes.length)) % aantalSpelers) === index && <span className="ml-2 text-[10px] bg-slate-700 text-slate-300 px-2 py-0.5 rounded-md">Deler</span>}
-                          {isMagUitkomen && <span className="ml-2 text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-md">Uitkomst</span>}
-                        </span>
-                        <span className="text-xs text-slate-500 mt-0.5">Totaal: <span className="text-white">{huidigeTotalen[index]}</span> pt</span>
+                <div className="space-y-3">
+                  {BESCHIKBARE_NAMEN
+                    .map(naam => ({
+                      naam,
+                      gewonnen: stats[naam]?.gewonnen || 0,
+                      verloren: stats[naam]?.verloren || 0
+                    }))
+                    .sort((a, b) => {
+                      if (b.gewonnen !== a.gewonnen) return b.gewonnen - a.gewonnen;
+                      return a.verloren - b.verloren;
+                    })
+                    .map((p, idx) => (
+                      <div key={p.naam} className="flex justify-between items-center p-4 bg-neutral-900/40 border border-neutral-900 rounded-2xl">
+                        <div className="flex items-center space-x-3">
+                          <span className="text-neutral-600 font-black text-sm w-5">{idx + 1}.</span>
+                          <span className="text-white font-extrabold">{p.naam}</span>
+                        </div>
+                        <div className="flex space-x-3 text-xs">
+                          <span className="px-3 py-1 bg-orange-500/10 text-orange-500 border border-orange-500/15 rounded-xl font-black">
+                            {p.gewonnen} Winst
+                          </span>
+                          <span className="px-3 py-1 bg-neutral-800 text-neutral-400 rounded-xl font-bold">
+                            {p.verloren} Verlies
+                          </span>
+                        </div>
                       </div>
-                      <button onClick={() => setPopupSpelerIndex(index)} className="w-16 h-12 rounded-xl flex items-center justify-center text-xl font-bold bg-slate-900/50 text-white border border-slate-700">{huidigeRondeInput[index]}</button>
+                    ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-3">
+                {spelers.map((s, i) => {
+                  const isUitkomst = i === uitkomstIdxLabel;
+                  const isDelerSpeler = i === delerLabelIdx;
+                  return (
+                    <div 
+                      key={i} 
+                      className={`bg-[#0d0d0d] border p-4 rounded-3xl flex items-center justify-between transition-all duration-300 ${
+                        isUitkomst 
+                          ? 'border-orange-500/40 ring-1 ring-orange-500/10 shadow-[0_0_20px_rgba(249,115,22,0.08)] bg-neutral-950' 
+                          : 'border-neutral-900'
+                      }`}
+                    >
+                      <div className="text-left">
+                        <div className="font-extrabold flex items-center text-neutral-100 text-base">
+                          {s} 
+                          {isDelerSpeler && (
+                            <span className="ml-2 text-[9px] bg-neutral-900 text-neutral-400 px-2 py-1 rounded-lg font-black uppercase tracking-wider border border-neutral-800">
+                              Deler
+                            </span>
+                          )}
+                          {isUitkomst && (
+                            <span className="ml-2 text-[9px] bg-orange-500/10 text-orange-500 px-2 py-1 rounded-lg font-black uppercase tracking-wider border border-orange-500/10">
+                              Uitkomen
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-neutral-500 font-bold mt-1 uppercase tracking-wider text-left">
+                          Totaal: <span className="text-neutral-300 font-extrabold">{huidigeTotalen[i]} pt</span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => {initAudio(); setPopupSpelerIndex(i);}} 
+                        className="w-16 h-14 rounded-2xl font-black bg-[#050505] border border-neutral-800 text-2xl shadow-inner active:bg-neutral-900 active:scale-95 transition-all text-white flex items-center justify-center"
+                      >
+                        {huidigeRondeInput[i]}
+                      </button>
                     </div>
                   );
                 })}
-
-                <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border border-slate-800 rounded-xl mt-4">
-                  <span className="text-sm font-semibold text-slate-400">Totaal (moet 20 zijn):</span>
-                  <span className={`text-lg font-bold ${huidigeRondeInput.reduce((a, b) => a + b, 0) === 20 ? 'text-emerald-400' : 'text-red-400'}`}>{huidigeRondeInput.reduce((a, b) => a + b, 0)} / 20</span>
-                </div>
               </div>
 
-              <button
-                onClick={probeerRondeToeTeVoegen}
-                className="w-full bg-emerald-500 text-slate-900 font-extrabold py-4 rounded-xl shadow-lg mt-6 flex items-center justify-center transition-all"
+              <div className="flex justify-between items-center p-5 bg-[#050505] rounded-3xl mt-6 border border-neutral-900 shadow-inner">
+                <span className="text-neutral-500 text-[10px] font-black uppercase tracking-widest text-left">Verdeeld (moet 20 zijn):</span>
+                <span className={`text-xl font-black transition-colors ${
+                  huidigeRondeInput.reduce((a,b)=>a+b,0) === 20 ? 'text-orange-500' : 'text-red-500'
+                }`}>
+                  {huidigeRondeInput.reduce((a,b)=>a+b,0)} / 20
+                </span>
+              </div>
+
+              <button 
+                onClick={probeerOpslaan} 
+                className="w-full bg-orange-500 hover:bg-orange-400 text-black font-black py-5 rounded-2xl shadow-xl active:scale-[0.98] transition-all flex items-center justify-center uppercase text-base tracking-wider mt-6 border border-orange-400/20"
               >
-                <Check className="w-5 h-5 mr-2" /> {editRondeIndex !== null ? "Wijziging Opslaan" : "Ronde Opslaan"}
+                <Check className="mr-2 w-5 h-5 stroke-[3]" /> Opslaan
               </button>
               
               {editRondeIndex !== null && (
-                <button
-                  onClick={() => { setEditRondeIndex(null); setHuidigeRondeInput(Array(aantalSpelers).fill(0)); setActieveTab('SCOREBORD'); }}
-                  className="w-full bg-slate-800 text-slate-400 py-3 rounded-xl mt-2 font-bold"
+                <button 
+                  onClick={() => {setEditRondeIndex(null); setActieveTab('SCOREBORD');}} 
+                  className="w-full bg-neutral-900 text-neutral-400 py-3.5 rounded-2xl font-bold hover:text-white transition-all text-xs uppercase tracking-wider"
                 >
                   Annuleren
                 </button>
               )}
             </div>
           )}
-
-          {actieveTab === 'OPTIES' && (
-            <div className="p-4 space-y-4">
-              <div className="bg-slate-800 border border-slate-700 p-6 rounded-2xl">
-                <h3 className="font-bold text-white mb-4 text-lg border-b border-slate-700 pb-2">Instellingen</h3>
-                <div className="space-y-4">
-                   <button onClick={() => speelGeluid(SOUND_URLS.BOO)} className="w-full bg-slate-700 py-3 rounded-xl text-white font-bold flex items-center justify-center"><AlertCircle className="mr-2 w-4 h-4" /> Test Boe-geluid</button>
-                   <button onClick={() => speelGeluid(SOUND_URLS.CHEER)} className="w-full bg-slate-700 py-3 rounded-xl text-white font-bold flex items-center justify-center"><Trophy className="mr-2 w-4 h-4" /> Test Applaus</button>
-                </div>
-                <ul className="mt-6 space-y-4 text-sm text-slate-400 border-t border-slate-700 pt-4">
-                  <li className="flex justify-between"><span>Aantal spelers</span><span className="text-white font-bold">{aantalSpelers}</span></li>
-                  <li className="flex justify-between"><span>Winnaar bij</span><span className="text-emerald-400 font-bold">100 pt</span></li>
-                </ul>
-              </div>
-            </div>
-          )}
         </div>
 
         {erOnderDoorVraag && (
-          <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md z-[70] flex items-center justify-center p-6 text-center">
-            <div className="bg-slate-900 border border-amber-500/50 rounded-3xl p-8 max-w-sm shadow-2xl animate-in zoom-in-95">
-                <Crown className="w-12 h-12 text-amber-400 mx-auto mb-4" />
-                <h3 className="text-2xl font-bold text-white mb-2">Er onder door?</h3>
-                <p className="text-slate-400 mb-8">Heeft <span className="text-amber-400 font-bold">{spelers[magOnderDoorIndex]}</span> alle slagen gepakt deze ronde?</p>
-                <div className="grid grid-cols-2 gap-4">
-                    <button onClick={() => finalizeRonde(erOnderDoorVraag, false)} className="bg-slate-800 text-white font-bold py-4 rounded-xl">Nee</button>
-                    <button onClick={() => finalizeRonde(erOnderDoorVraag, true)} className="bg-emerald-500 text-slate-900 font-bold py-4 rounded-xl shadow-lg">Ja!</button>
-                </div>
-            </div>
-          </div>
-        )}
-
-        {popupSpelerIndex !== null && (
-          <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex flex-col pt-10 px-4 animate-in slide-in-from-bottom-10">
-            <div className="flex justify-between items-center mb-6 px-2">
-              <div>
-                <h3 className="text-xl font-bold text-white">Score voor {spelers[popupSpelerIndex]}</h3>
-                <p className="text-emerald-400 text-sm">Resterend te verdelen: {puntenResterend} pt</p>
+          <div className="absolute inset-0 bg-black/95 z-[70] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in duration-300">
+            <div className="bg-[#0c0c0c] border border-amber-500/30 rounded-[2.5rem] p-10 max-w-sm shadow-2xl text-center">
+              <div className="w-16 h-16 bg-amber-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6 border border-amber-500/20">
+                <Crown className="w-8 h-8 text-amber-500 drop-shadow-[0_0_10px_rgba(245,158,11,0.2)]" />
               </div>
-              <button onClick={() => setPopupSpelerIndex(null)} className="p-2 bg-slate-800 rounded-full text-slate-400"><X className="w-6 h-6" /></button>
-            </div>
-            <div className="grid grid-cols-4 gap-3 flex-1 content-start overflow-y-auto pb-10">
-              {[...Array(21).keys()].map(num => {
-                const isNogMogelijk = num <= puntenResterend;
-                return (
-                  <button
-                    key={num}
-                    disabled={!isNogMogelijk}
-                    onClick={() => selecteerScore(num)}
-                    className={`py-4 rounded-2xl text-lg font-bold transition-all ${
-                      huidigeRondeInput[popupSpelerIndex] === num 
-                        ? 'bg-emerald-500 text-white shadow-lg' 
-                        : isNogMogelijk 
-                          ? 'bg-slate-800 text-white border border-slate-700 active:scale-90' 
-                          : 'bg-slate-950 text-slate-700 border border-slate-900 opacity-40 cursor-not-allowed'
-                    }`}
-                  >
-                    {num}
-                  </button>
-                );
-              })}
+              <h3 className="text-2xl font-black mb-3 text-white uppercase tracking-tight text-center">Er onder door?</h3>
+              <p className="text-neutral-400 mb-8 text-sm leading-relaxed text-center">
+                Heeft <span className="text-amber-500 font-extrabold underline">{spelers[uitkomstIdxLabel]}</span> echt alle slagen gepakt deze ronde?
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => finalizeRonde(erOnderDoorVraag, false)} className="bg-neutral-900 text-neutral-300 py-4 rounded-2xl font-black text-sm active:scale-95 transition-transform">NEE</button>
+                <button onClick={() => finalizeRonde(erOnderDoorVraag, true)} className="bg-orange-500 text-black py-4 rounded-2xl font-black text-sm active:scale-95 transition-transform uppercase tracking-wider shadow-lg shadow-orange-500/10">JA!</button>
+              </div>
             </div>
           </div>
         )}
 
-        <nav className="absolute bottom-0 left-0 w-full bg-slate-900/90 backdrop-blur-md border-t border-slate-800 flex justify-between px-2 pb-safe z-20">
+        {/* Volledig dekkend en ondoorzichtig invoerscherm om elke overlap te voorkomen */}
+        {popupSpelerIndex !== null && (
+          <div className="absolute inset-0 bg-[#050505] z-50 flex flex-col animate-in slide-in-from-bottom-12 duration-350">
+            <div className="pt-14 px-8 pb-6 bg-[#0c0c0c] border-b border-neutral-900 flex justify-between items-end shadow-2xl">
+              <div className="text-left">
+                <h3 className="text-2xl font-black text-white leading-tight">Score {spelers[popupSpelerIndex]}</h3>
+                <p className="text-orange-500 font-bold uppercase text-[10px] tracking-widest mt-1 text-left">
+                  Nog {restPunten} punten over
+                </p>
+              </div>
+              <button 
+                onClick={() => setPopupSpelerIndex(null)} 
+                className="p-3 bg-neutral-900 border border-neutral-800 rounded-full text-neutral-400 shadow-lg active:scale-90 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-8">
+              <div className="grid grid-cols-4 gap-3.5 content-start pb-28">
+                {GELDIGE_SCORES.map(num => {
+                  const isTeGroot = num > restPunten;
+                  return (
+                    <button 
+                      key={num} 
+                      disabled={isTeGroot} 
+                      onClick={() => { 
+                        const nw = [...huidigeRondeInput]; 
+                        nw[popupSpelerIndex] = num; 
+                        setHuidigeRondeInput(nw); 
+                        setPopupSpelerIndex(null); 
+                      }} 
+                      className={`h-15 rounded-2xl font-black text-lg transition-all flex items-center justify-center ${
+                        huidigeRondeInput[popupSpelerIndex] === num 
+                          ? 'bg-orange-500 text-black shadow-xl shadow-orange-500/10 ring-2 ring-orange-400/50' 
+                          : isTeGroot 
+                            ? 'bg-[#050505] text-neutral-800 border-transparent opacity-[0.06] cursor-not-allowed' 
+                            : 'bg-neutral-900 border border-neutral-800 active:scale-90 text-white hover:bg-neutral-850'
+                      }`}
+                    >
+                      {num}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {bevestigResetVraag && (
+          <div className="absolute inset-0 bg-black/95 z-[70] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in duration-300">
+            <div className="bg-[#0c0c0c] border border-red-500/30 rounded-[2.5rem] p-8 max-w-sm shadow-2xl text-center">
+              <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6 border border-red-500/20">
+                <RotateCcw className="w-8 h-8 text-red-500" />
+              </div>
+              <h3 className="text-2xl font-black mb-3 text-white uppercase tracking-tight text-center font-bold">Spel Resetten?</h3>
+              <p className="text-neutral-400 mb-8 text-sm leading-relaxed text-center">
+                Weet je zeker dat je een nieuw spel wilt starten? Alle huidige scores gaan definitief verloren.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => setBevestigResetVraag(false)} className="bg-neutral-900 text-neutral-300 py-4 rounded-2xl font-black text-sm active:scale-95 transition-transform">ANNULEREN</button>
+                <button 
+                  onClick={() => {
+                    setBevestigResetVraag(false);
+                    setFase('setup'); 
+                    stopGeluid(); 
+                    setRondes([]);
+                  }} 
+                  className="bg-red-500 text-white py-4 rounded-2xl font-black text-sm active:scale-95 transition-transform uppercase tracking-wider shadow-lg shadow-red-500/10"
+                >
+                  JA, RESET
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {bevestigResetStatsVraag && (
+          <div className="absolute inset-0 bg-black/95 z-[70] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in duration-300">
+            <div className="bg-[#0c0c0c] border border-red-500/30 rounded-[2.5rem] p-8 max-w-sm shadow-2xl text-center">
+              <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6 border border-red-500/20">
+                <Trash2 className="w-8 h-8 text-red-500" />
+              </div>
+              <h3 className="text-2xl font-black mb-3 text-white uppercase tracking-tight text-center font-bold">Statistieken Wissen?</h3>
+              <p className="text-neutral-400 mb-8 text-sm leading-relaxed text-center">
+                Weet je zeker dat je alle winst- en verliesstatistieken wilt wissen? Dit kan niet ongedaan worden gemaakt.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => setBevestigResetStatsVraag(false)} className="bg-neutral-900 text-neutral-300 py-4 rounded-2xl font-black text-sm active:scale-95 transition-transform">ANNULEREN</button>
+                <button 
+                  onClick={() => {
+                    setBevestigResetStatsVraag(false);
+                    const defaultStats = {};
+                    BESCHIKBARE_NAMEN.forEach(naam => {
+                      defaultStats[naam] = { gewonnen: 0, verloren: 0 };
+                    });
+                    setStats(defaultStats);
+                    localStorage.setItem('schoppenjagen_stats', JSON.stringify(defaultStats));
+                    toonMelding('Statistieken succesvol gewist!', 'info');
+                  }} 
+                  className="bg-red-500 text-white py-4 rounded-2xl font-black text-sm active:scale-95 transition-transform uppercase tracking-wider shadow-lg shadow-red-500/10"
+                >
+                  JA, WIS
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <nav className="absolute bottom-0 left-0 w-full bg-[#0c0c0c]/95 border-t border-neutral-900 flex justify-between px-2 pb-safe z-20 backdrop-blur-xl">
           {[
-            { id: 'SCOREBORD', icon: <List className="w-5 h-5" />, label: 'Scores' },
-            { id: 'INVOEREN', icon: <Plus className="w-5 h-5" />, label: 'Invoeren' },
-            { id: 'OPTIES', icon: <Settings className="w-5 h-5" />, label: 'Extra' },
-          ].map((tab) => (
-            <button key={tab.id} onClick={() => setActieveTab(tab.id)} className={`flex-1 flex flex-col items-center justify-center py-4 px-2 transition-all ${actieveTab === tab.id ? 'text-emerald-400' : 'text-slate-500'}`}>
-              {tab.icon}
-              <span className="text-[10px] font-bold mt-1 tracking-wide">{tab.label}</span>
+            { id: 'SCOREBORD', icon: <List className="w-6 h-6" />, label: 'Scores' },
+            { id: 'INVOEREN', icon: <Plus className="w-6 h-6" />, label: 'Invoer' },
+            { id: 'STATISTIEKEN', icon: <BarChart3 className="w-6 h-6" />, label: 'Stats' },
+          ].map((t) => (
+            <button 
+              key={t.id} 
+              onClick={() => {initAudio(); setActieveTab(t.id);}} 
+              className={`flex-1 flex flex-col items-center py-4 transition-all duration-300 ${
+                actieveTab === t.id ? 'text-orange-500 scale-105' : 'text-neutral-500 hover:text-neutral-300'
+              }`}
+            >
+              {t.icon}
+              <span className="text-[9px] font-black mt-1.5 uppercase tracking-widest">{t.label}</span>
             </button>
           ))}
-          <button onClick={() => { if(window.confirm('Nieuw spel starten?')) setFase('setup'); }} className="flex-1 flex flex-col items-center justify-center py-4 px-2 text-red-400/80"><RotateCcw className="w-5 h-5" /><span className="text-[10px] font-bold mt-1">Reset</span></button>
+          <button 
+            onClick={() => { setBevestigResetVraag(true); }} 
+            className="flex-1 flex flex-col items-center py-4 text-red-500/40 hover:text-red-500 active:scale-95 transition-all"
+          >
+            <RotateCcw className="w-5 h-5" />
+            <span className="text-[9px] font-black mt-1.5 uppercase tracking-widest">Reset</span>
+          </button>
         </nav>
       </div>
     </div>
   );
-};
-
-export default App;
+}
